@@ -46,6 +46,9 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
         price = discovery_info["price"]
 
         sensor = BinanceExchangeSensor(hass.data[DATA_BINANCE], name, symbol, price)
+    else:
+        sensor = BinanceBalanceSensor(
+            hass.data[DATA_BINANCE])
 
     add_entities([sensor], True)
 
@@ -116,7 +119,6 @@ class BinanceSensor(SensorEntity):
                 )
                 break
 
-
 class BinanceExchangeSensor(SensorEntity):
     """Representation of a Sensor."""
 
@@ -168,3 +170,47 @@ class BinanceExchangeSensor(SensorEntity):
                 elif ticker["symbol"][-3:] in QUOTE_ASSETS[:2]:
                     self._unit_of_measurement = ticker["symbol"][-3:]
                 break
+
+class BinanceBalanceSensor(SensorEntity):
+    """Representation of a Sensor."""
+
+    def __init__(self, binance_data):
+        """Initialize the sensor."""
+        self._binance_data = binance_data
+        self._name = "Spot Balance"
+        self._balance = None
+        self._unit_of_measurement = "USD"
+        self._state = None
+
+    @property
+    def name(self):
+        """Return the name of the sensor."""
+        return self._name
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        return self._state
+
+    @property
+    def unit_of_measurement(self):
+        """Return the unit of measurement this sensor expresses itself in."""
+        return self._unit_of_measurement
+
+    @property
+    def icon(self):
+        """Icon to use in the frontend, if any."""
+        return CURRENCY_ICONS.get(self._unit_of_measurement, DEFAULT_COIN_ICON)
+
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes of the sensor."""
+
+        return {
+            ATTR_ATTRIBUTION: ATTRIBUTION,
+        }
+
+    def update(self):
+        """Update current values."""
+        self._binance_data.update()
+        self._state = self._binance_data.spot_balance

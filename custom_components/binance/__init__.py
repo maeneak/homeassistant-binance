@@ -81,6 +81,8 @@ def setup(hass, config):
                 ticker["name"] = name
                 load_platform(hass, "sensor", DOMAIN, ticker, config)
 
+    load_platform(hass, "sensor", DOMAIN, binance_data.spot_balance, config)
+
     return True
 
 
@@ -89,6 +91,7 @@ class BinanceData:
         """Initialize."""
         self.client = Client(api_key, api_secret, tld=tld)
         self.balances = []
+        self.spot_balance = 0.0
         self.tickers = {}
         self.tld = tld
         self.update()
@@ -98,6 +101,7 @@ class BinanceData:
         _LOGGER.debug(f"Fetching data from binance.{self.tld}")
         try:
             account_info = self.client.get_account()
+            ticker_info = self.client.get_ticker()
             balances = account_info.get("balances", [])
             if balances:
                 self.balances = balances
@@ -107,6 +111,52 @@ class BinanceData:
             if prices:
                 self.tickers = prices
                 _LOGGER.debug(f"Exchange rates updated from binance.{self.tld}")
+
+            self.spot_balance = self.async_spotbalance(account_info, ticker_info)
+
         except (BinanceAPIException, BinanceRequestException) as e:
             _LOGGER.error(f"Error fetching data from binance.{self.tld}: {e.message}")
             return False
+
+    def async_spotbalance(self, account, tickers) -> float:
+        balances = {
+            b["asset"]: float(b["free"]) + float(b["locked"])
+            for b in account["balances"]
+        }
+        in_btc = self.getTickerMapIn("BTC", tickers)
+        in_bnb = self.getTickerMapIn("BNB", tickers)
+        in_usdt = self.getTickerMapIn("USDT", tickers)
+        btc_usdt = 0.0
+        for ticker in tickers:
+            if ticker["symbol"] == "BTCUSDT":
+                btc_usdt = float(ticker["lastPrice"])
+
+        # Calculate balances in BTC, and 24-hour % changes.
+        balances_in_btc = {}
+        for k, v in balances.items():
+            if k == "BTC":
+                balances_in_btc[k] = {"$": v}
+            elif k == "USDT":
+                balances_in_btc[k] = {"$": v * (1 / in_usdt["BTC"]["$"])}
+            elif in_btc.get(k):
+                balances_in_btc[k] = {"$": v * in_btc[k]["$"]}
+            elif not in_btc.get(k) and in_bnb.get(k):
+                balances_in_btc[k] = {"$": v * in_bnb[k]["$"] * in_btc["BNB"]["$"]}
+
+        relevant_balances_in_btc = {
+            k: v for k, v in balances_in_btc.items() if v["$"] > 0.0001
+        }
+        return round(
+            sum(d["$"] for d in relevant_balances_in_btc.values() if d) * btc_usdt, 2
+        )
+
+
+    def getTickerMapIn(self, symbol, tickers):
+        return {
+            t["symbol"][: -len(symbol)]: {
+                "$": float(t["lastPrice"]),
+                "%": float(t["priceChangePercent"]),
+            }
+            for t in tickers
+            if t["symbol"][-len(symbol) :] == symbol
+        }
